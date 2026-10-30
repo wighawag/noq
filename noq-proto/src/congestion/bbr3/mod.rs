@@ -1740,7 +1740,8 @@ impl Bbr3 {
         if largest_packet_num_acked.is_some() {
             if self.app_limited != 0 && self.delivered > self.app_limited {
                 self.app_limited = 0;
-            } else if app_limited {
+            }
+            if app_limited {
                 self.app_limited = Ord::max(self.delivered + self.inflight, 1);
             }
             let round_count = self.round_count;
@@ -6992,5 +6993,34 @@ mod test {
             "max_bw after subsequent probing ({max_bw_final}) should still be within 10% of the \
              simulated {BW} (rel err {final_err})"
         );
+    }
+}
+
+#[cfg(test)]
+mod idle_regression {
+    use super::*;
+
+    #[test]
+    fn application_limited_idle_does_not_fill_pipe() {
+        let start = Instant::now();
+        let mut controller = Bbr3::new(Arc::new(Bbr3Config::default()), 1200);
+        let rtt = RttEstimator::new(Duration::from_millis(90));
+        for pn in 0..12 {
+            let sent = start + Duration::from_secs(pn);
+            let acked = sent + Duration::from_millis(90);
+            controller.on_packet_sent(sent, 100, pn, SpaceKind::Data);
+            controller.on_ack(acked, sent, 100, pn, SpaceKind::Data, true, &rtt);
+            controller.on_end_acks(acked, 0, true, Some(pn), SpaceKind::Data);
+        }
+        assert!(
+            !controller.full_bw_reached,
+            "idle application-limited traffic must not end startup"
+        );
+        let sent = start + Duration::from_secs(12);
+        let acked = sent + Duration::from_millis(90);
+        controller.on_packet_sent(sent, 1200, 12, SpaceKind::Data);
+        controller.on_ack(acked, sent, 1200, 12, SpaceKind::Data, false, &rtt);
+        controller.on_end_acks(acked, 0, false, Some(12), SpaceKind::Data);
+        assert_eq!(controller.app_limited, 0);
     }
 }
