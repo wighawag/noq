@@ -5571,3 +5571,35 @@ fn qlog_packet_lost_trigger() {
         ]
     );
 }
+
+#[test]
+fn advertised_datagram_space_preserves_queued_packets() {
+    let client_cfg = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            datagram_send_buffer_size: 256,
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(client_cfg);
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    let first = Bytes::from(vec![0xA0; 64]);
+    let second = Bytes::from(vec![0xB0; 64]);
+    assert_eq!(
+        pair.client_datagrams(client_ch)
+            .send_many(&[first.clone(), second.clone()], false)
+            .unwrap(),
+        2
+    );
+    let space = pair.client_datagrams(client_ch).send_buffer_space();
+    assert!(space > 0);
+    let last = Bytes::from(vec![0xC0; space]);
+    pair.client_datagrams(client_ch)
+        .send(last.clone(), true)
+        .unwrap();
+    pair.drive();
+    let mut out = vec![Bytes::new(); 3];
+    assert_eq!(pair.server_datagrams(server_ch).recv_many(&mut out), 3);
+    assert_eq!(out, vec![first, second, last]);
+}

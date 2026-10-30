@@ -166,7 +166,7 @@ impl Datagrams<'_> {
         self.conn
             .config
             .datagram_send_buffer_size
-            .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
+            .saturating_sub(self.conn.datagrams.outgoing.memory_used())
             .saturating_sub(size_of::<Datagram>())
     }
 }
@@ -235,7 +235,7 @@ impl DatagramState {
     pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
         let mut dropped_any = false;
         self.outgoing.queue.retain(|datagram| {
-            let result = datagram.data.len() < max_payload;
+            let result = datagram.data.len() <= max_payload;
             if !result {
                 trace!(
                     "dropping {} byte datagram violating {} byte limit",
@@ -390,6 +390,20 @@ mod tests {
                 break;
             }
         }
+    }
+    #[test]
+    fn pmtu_cleanup_preserves_datagrams_at_the_limit() {
+        let mut state = DatagramState::default();
+        let valid = Bytes::from_static(b"max-size");
+        state.outgoing.push_back(Datagram {
+            data: valid.clone(),
+        });
+        state.outgoing.push_back(Datagram {
+            data: Bytes::from_static(b"oversized"),
+        });
+        assert!(state.drop_oversized(valid.len()));
+        assert_eq!(state.outgoing.pop_front().unwrap().data, valid);
+        assert!(state.outgoing.is_empty());
     }
 }
 
